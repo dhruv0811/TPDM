@@ -1,0 +1,21 @@
+# SD1.5 LoRA + Time Prediction Model configuration
+
+_target_: src.models.stable_diffusion_v1_5.modeling_sd_v1_5_lora.SD15LoRAPredictNextTimeStepModel
+pretrained_model_name_or_path: models/runwayml/stable-diffusion-v1-5
+do_train: True
+
+# LoRA Parameters
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.1
+lora_target_modules: 
+  - "to_q"
+  - "to_k"
+  - "to_v"
+  - "to_out.0"
+
+# Time Predictor Parameters
+init_alpha: 1.5
+init_beta: -0.7
+min_time: 10
+gamma: 0.97

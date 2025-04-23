@@ -1,0 +1,19 @@
+# SD3 LoRA + Time Prediction Model configuration
+
+_target_: src.models.stable_diffusion_3.modeling_sd3_pnt_lora.SD3LoRAPredictNextTimeStepModelRLOOWrapper
+pretrained_model_name_or_path: models/stabilityai/stable-diffusion-3-medium
+torch_dtype: ${resolve:torch.float16}
+
+# LoRA Parameters
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.1
+lora_target_modules: 
+  - "q_proj"
+  - "k_proj"
+  - "v_proj"
+  - "out_proj"
+
+# Time Predictor Parameters
+min_sigma: 0.01
+pre_process: False
