@@ -28,49 +28,58 @@ class SD15LoRAPredictNextTimeStepModel(SD15PredictNextTimeStepModel):
         lora_alpha: int = 32,
         lora_dropout: float = 0.0,
         lora_target_modules: Optional[List[str]] = None,
+        torch_dtype=None,
+        fsdp=None,
+        max_inference_steps: int = 28,
         **kwargs
     ):
         """
-        Initialize the SD1.5 model with LoRA support.
+        Initialize the LoRA-enabled wrapper.
         
         Args:
-            pretrained_model_name_or_path: Path to pretrained SD1.5 model
+            pretrained_model_name_or_path: Path to pretrained SD3 model
             lora_rank: Rank of LoRA adapters
             lora_alpha: Alpha parameter for LoRA scaling
             lora_dropout: Dropout probability for LoRA layers
             lora_target_modules: List of module names to apply LoRA to
-            **kwargs: Additional arguments for SD15PredictNextTimeStepModel
+            fsdp: FSDP configuration (used by wrapper only)
+            max_inference_steps: Maximum number of inference steps
+            **kwargs: Additional arguments for SD3PredictNextTimeStepModel
         """
-        # Initialize the base model
-        super().__init__(pretrained_model_name_or_path, **kwargs)
+        # Set basic attributes
+        self.pretrained_model_name_or_path = pretrained_model_name_or_path
         
-        # Default targets for SD1.5 if not provided
-        if lora_target_modules is None:
-            lora_target_modules = ["to_q", "to_k", "to_v", "to_out.0"]
+        # We'll store the FSDP and max_inference_steps parameters but not pass them to the model
+        self.fsdp = [] if fsdp is None else fsdp
+        self.max_inference_steps = max_inference_steps
         
-        # Create LoRA adapter for UNet
-        self.unet_lora_adapter = DiffusionLoraAdapter(
-            model=self.unet,
+        # Create the agent model
+        self.agent_model = SD3LoRAPredictNextTimeStepModel(
+            pretrained_model_name_or_path,
+            torch_dtype=torch_dtype,
             lora_rank=lora_rank,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
-            target_modules=lora_target_modules,
-            model_type="sd1.5"
+            lora_target_modules=lora_target_modules,
+            **kwargs  # Pass other arguments to the model
         )
         
-        # Replace UNet with LoRA-adapted version
-        self.unet = self.unet_lora_adapter.adapted_model
+        # Set other attributes from kwargs
+        self.relative = kwargs.get("relative", True)
         
-        # Set trainable parameters
-        self.requires_grad_(False)
-        self.time_predictor.requires_grad_(True)
+        # Make base model non-trainable
+        self.agent_model.requires_grad_(False)
         
-        # Make LoRA parameters trainable
-        for name, param in self.named_parameters():
+        # Make only the time predictor and LoRA parameters trainable
+        self.agent_model.time_predictor.train()
+        self.agent_model.time_predictor.requires_grad_(True)
+        
+        # Make sure LoRA parameters are trainable
+        for name, param in self.agent_model.named_parameters():
             if "lora_" in name:
                 param.requires_grad = True
         
-        logger.info(f"Initialized SD1.5 model with LoRA adapters (rank={lora_rank}, alpha={lora_alpha})")
+        logger.info(f"Initialized SD3 LoRA+TPM model with LoRA rank={lora_rank}")
     
     def save_lora_weights(self, save_path: str):
         """

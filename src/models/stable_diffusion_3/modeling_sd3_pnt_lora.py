@@ -24,6 +24,7 @@ class SD3LoRAPredictNextTimeStepModel(SD3PredictNextTimeStepModel):
     def __init__(
         self,
         pretrained_model_name_or_path,
+        torch_dtype=torch.float16,
         lora_rank: int = 16,
         lora_alpha: int = 32,
         lora_dropout: float = 0.0,
@@ -41,8 +42,12 @@ class SD3LoRAPredictNextTimeStepModel(SD3PredictNextTimeStepModel):
             lora_target_modules: List of module names to apply LoRA to
             **kwargs: Additional arguments for SD3PredictNextTimeStepModel
         """
+        # Filter out kwargs that the parent class doesn't accept
+        parent_kwargs = {k: v for k, v in kwargs.items() 
+                         if k not in ['fsdp', 'max_inference_steps']}
+        
         # Initialize the base model
-        super().__init__(pretrained_model_name_or_path, **kwargs)
+        super().__init__(pretrained_model_name_or_path, torch_dtype=torch_dtype, **parent_kwargs)
         
         # Create LoRA adapter for transformer
         self.unet_lora_adapter = DiffusionLoraAdapter(

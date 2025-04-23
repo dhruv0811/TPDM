@@ -8,3 +8,6 @@ __pycache__/
 checkpoint/*
 /compiled_cache.db
 submit_*.sh
+*.out
+*.log
+*.err

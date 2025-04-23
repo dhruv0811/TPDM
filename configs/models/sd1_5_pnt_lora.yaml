@@ -3,6 +3,7 @@
 _target_: src.models.stable_diffusion_v1_5.modeling_sd_v1_5_lora.SD15LoRAPredictNextTimeStepModel
 pretrained_model_name_or_path: models/runwayml/stable-diffusion-v1-5
 do_train: True
+torch_dtype: "float16"
 
 # LoRA Parameters
 lora_rank: 16

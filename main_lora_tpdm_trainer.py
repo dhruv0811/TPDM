@@ -8,6 +8,8 @@ the Time Prediction Diffusion Model (TPDM) simultaneously.
 import logging
 import os
 import pathlib
+from dataclasses import dataclass, field
+from typing import Optional
 
 import hydra
 import torch
@@ -25,6 +27,14 @@ logging.basicConfig(level=logging.INFO, format=log_format)
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class LoRaRLOOConfig(CustomRLOOConfig):
+    """Configuration for LoRA+RLOO training."""
+    lora_learning_rate: float = field(default=1e-4, metadata={"help": "Learning rate for LoRA parameters"})
+    lora_weight_decay: float = field(default=0.0, metadata={"help": "Weight decay for LoRA parameters"})
+    freeze_time_predictor: bool = field(default=False, metadata={"help": "Whether to freeze the time predictor during training"})
+
+
 def train(cfg, training_args):
     """
     Train a joint LoRA and Time Prediction model.
@@ -33,6 +43,20 @@ def train(cfg, training_args):
         cfg: Configuration for model, dataset, etc.
         training_args: Training arguments
     """
+    # Load model config
+    model_config = OmegaConf.load(cfg.model_config)
+    
+    # Convert string dtype to actual torch dtype and pass it as a separate parameter
+    torch_dtype = None
+    if 'torch_dtype' in model_config:
+        dtype_str = model_config.get('torch_dtype')
+        if dtype_str == "float16":
+            torch_dtype = torch.float16
+        elif dtype_str == "float32":
+            torch_dtype = torch.float32
+        elif dtype_str == "bfloat16":
+            torch_dtype = torch.bfloat16
+    
     # Instantiate model based on configuration
     model = hydra.utils.instantiate(
         OmegaConf.load(cfg.model_config),
@@ -78,11 +102,11 @@ def train(cfg, training_args):
 
     # Resume from checkpoint if available
     if (
-        list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")) and args.resume_from_checkpoint is not None
-    ) or os.path.isdir(args.resume_from_checkpoint):
+        list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")) and training_args.resume_from_checkpoint is not None
+    ) or os.path.isdir(training_args.resume_from_checkpoint):
         # Judge whether resume_from_checkpoint is a path
-        if os.path.isdir(args.resume_from_checkpoint):
-            trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
+        if os.path.isdir(training_args.resume_from_checkpoint):
+            trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
         else:
             trainer.train(resume_from_checkpoint=True)
     else:
@@ -104,16 +128,7 @@ def train(cfg, training_args):
 
 if __name__ == "__main__":
     # Parse arguments
-    parser = transformers.HfArgumentParser((ConfigPathArguments, CustomRLOOConfig))
-    
-    # Add LoRA-specific arguments
-    parser.add_argument("--lora_learning_rate", type=float, default=1e-4, 
-                       help="Learning rate for LoRA parameters")
-    parser.add_argument("--lora_weight_decay", type=float, default=0.0, 
-                       help="Weight decay for LoRA parameters")
-    parser.add_argument("--freeze_time_predictor", action="store_true", 
-                       help="Whether to freeze the time predictor during training")
-    
+    parser = transformers.HfArgumentParser((ConfigPathArguments, LoRaRLOOConfig))
     cfg, args = parser.parse_args_into_dataclasses()
 
     # Set model-specific args if not provided
