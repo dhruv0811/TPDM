@@ -7,3 +7,7 @@ __pycache__/
 /models
 checkpoint/*
 /compiled_cache.db
+submit_*.sh
+*.log
+*.out
+*.err

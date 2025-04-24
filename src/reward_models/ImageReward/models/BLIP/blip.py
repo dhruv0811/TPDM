@@ -17,7 +17,7 @@ warnings.filterwarnings("ignore")
 
 
 def init_tokenizer():
-    tokenizer = BertTokenizer.from_pretrained("models/bert-base-uncased")
+    tokenizer = BertTokenizer.from_pretrained("google-bert/bert-base-uncased")
     tokenizer.add_special_tokens({'bos_token':'[DEC]'})
     tokenizer.add_special_tokens({"additional_special_tokens": ["[ENC]"]})
     tokenizer.enc_token_id = tokenizer.additional_special_tokens_ids[0]

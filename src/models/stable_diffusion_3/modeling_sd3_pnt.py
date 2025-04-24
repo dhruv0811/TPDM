@@ -26,6 +26,11 @@ from src.models.model_utilis import CustomDiffusionModelOutput, CustomFlowMatchE
 from src.models.reference_distributions import get_ref_beta
 from src.models.stable_diffusion_3.transformer_sd3 import CustomSD3Transformer2DModel
 
+# LORA
+import math
+import sys
+sys.path.append("src/models")
+from lora_adapter import LoraAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -759,11 +764,40 @@ class SD3PredictNextTimeStepModelRLOOWrapper(nn.Module):
 
         self.agent_model.requires_grad_(False)
 
+        # Apply LoRA to transformer
+        lora_rank = 4
+        lora_alpha = 8.0
+        lora_dropout = 0.0
+        
+        # Apply LoRA to attention modules in the transformer
+        for i, block in enumerate(self.agent_model.transformer.transformer_blocks):
+            # Apply to attention modules (query, key, value, proj)
+            if hasattr(block, "attn"):
+                if hasattr(block.attn, "qkv"):
+                    # Handle joined QKV case
+                    block.attn.qkv = LoraAdapter(block.attn.qkv, lora_rank, lora_alpha, lora_dropout)
+                else:
+                    # Handle separate Q, K, V case
+                    if hasattr(block.attn, "query"):
+                        block.attn.query = LoraAdapter(block.attn.query, lora_rank, lora_alpha, lora_dropout)
+                    if hasattr(block.attn, "key"):
+                        block.attn.key = LoraAdapter(block.attn.key, lora_rank, lora_alpha, lora_dropout)
+                    if hasattr(block.attn, "value"):
+                        block.attn.value = LoraAdapter(block.attn.value, lora_rank, lora_alpha, lora_dropout)
+                
+                # Output projection
+                if hasattr(block.attn, "proj"):
+                    block.attn.proj = LoraAdapter(block.attn.proj, lora_rank, lora_alpha, lora_dropout)
+        
+        # Apply LoRA to the time predictor for the linear layers
         self.agent_model.time_predictor.train()
+        time_predictor = self.agent_model.time_predictor
+        if hasattr(time_predictor, "fc1") and isinstance(time_predictor.fc1, nn.Linear):
+            time_predictor.fc1 = LoraAdapter(time_predictor.fc1, lora_rank, lora_alpha, lora_dropout)
+        if hasattr(time_predictor, "fc2") and isinstance(time_predictor.fc2, nn.Linear):
+            time_predictor.fc2 = LoraAdapter(time_predictor.fc2, lora_rank, lora_alpha, lora_dropout)
+        
         self.agent_model.time_predictor.requires_grad_(True)
-
-        # self.ref_alpha, self.ref_beta = 15.0, 1.5
-        # self.ref_distribution = torch.distributions.Beta(self.ref_alpha, self.ref_beta)
 
     def rloo_repeat(self, data, rloo_k):
         """make the data repeat rloo_k times
