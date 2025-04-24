@@ -762,6 +762,11 @@ class SD3PredictNextTimeStepModelRLOOWrapper(nn.Module):
         self.fsdp = fsdp
         self.max_inference_steps = max_inference_steps
 
+        # Count total parameters before LoRA
+        total_params_before = sum(p.numel() for p in self.agent_model.parameters())
+        logger.info(f"Total parameters before LoRA: {total_params_before:,}")
+        
+        # Freeze all parameters
         self.agent_model.requires_grad_(False)
 
         # Apply LoRA to transformer
@@ -769,35 +774,92 @@ class SD3PredictNextTimeStepModelRLOOWrapper(nn.Module):
         lora_alpha = 8.0
         lora_dropout = 0.0
         
-        # Apply LoRA to attention modules in the transformer
-        for i, block in enumerate(self.agent_model.transformer.transformer_blocks):
-            # Apply to attention modules (query, key, value, proj)
-            if hasattr(block, "attn"):
-                if hasattr(block.attn, "qkv"):
-                    # Handle joined QKV case
-                    block.attn.qkv = LoraAdapter(block.attn.qkv, lora_rank, lora_alpha, lora_dropout)
-                else:
-                    # Handle separate Q, K, V case
-                    if hasattr(block.attn, "query"):
-                        block.attn.query = LoraAdapter(block.attn.query, lora_rank, lora_alpha, lora_dropout)
-                    if hasattr(block.attn, "key"):
-                        block.attn.key = LoraAdapter(block.attn.key, lora_rank, lora_alpha, lora_dropout)
-                    if hasattr(block.attn, "value"):
-                        block.attn.value = LoraAdapter(block.attn.value, lora_rank, lora_alpha, lora_dropout)
+        lora_transformer_layers_count = 0
+        lora_time_predictor_layers_count = 0
+        # # Apply LoRA to attention modules in the transformer
+        # for i, block in enumerate(self.agent_model.transformer.transformer_blocks):
+        #     # Apply to attention modules (query, key, value, proj)
+        #     if hasattr(block, "attn"):
+        #         if hasattr(block.attn, "qkv"):
+        #             # Handle joined QKV case
+        #             block.attn.qkv = LoraAdapter(block.attn.qkv, lora_rank, lora_alpha, lora_dropout)
+        #             lora_transformer_layers_count += 1
+        #             logger.info(f"Applied LoRA to transformer block {i} QKV layer")
+        #         else:
+        #             # Handle separate Q, K, V case
+        #             if hasattr(block.attn, "query"):
+        #                 block.attn.query = LoraAdapter(block.attn.query, lora_rank, lora_alpha, lora_dropout)
+        #                 lora_transformer_layers_count += 1
+        #                 logger.info(f"Applied LoRA to transformer block {i} query layer")
+        #             if hasattr(block.attn, "key"):
+        #                 block.attn.key = LoraAdapter(block.attn.key, lora_rank, lora_alpha, lora_dropout)
+        #                 lora_transformer_layers_count += 1
+        #                 logger.info(f"Applied LoRA to transformer block {i} key layer")
+        #             if hasattr(block.attn, "value"):
+        #                 block.attn.value = LoraAdapter(block.attn.value, lora_rank, lora_alpha, lora_dropout)
+        #                 lora_transformer_layers_count += 1
+        #                 logger.info(f"Applied LoRA to transformer block {i} value layer")
                 
-                # Output projection
-                if hasattr(block.attn, "proj"):
-                    block.attn.proj = LoraAdapter(block.attn.proj, lora_rank, lora_alpha, lora_dropout)
+        #         # Output projection
+        #         if hasattr(block.attn, "proj"):
+        #             block.attn.proj = LoraAdapter(block.attn.proj, lora_rank, lora_alpha, lora_dropout)
+        #             lora_transformer_layers_count += 1
+        #             logger.info(f"Applied LoRA to transformer block {i} projection layer")
+        
+        # logger.info(f"Applied LoRA to {lora_transformer_layers_count} transformer layers in total")
         
         # Apply LoRA to the time predictor for the linear layers
         self.agent_model.time_predictor.train()
         time_predictor = self.agent_model.time_predictor
+
+        # Log the time predictor structure to debug
+        logger.info(f"Time predictor structure: {time_predictor}")
+        for name, module in time_predictor.named_modules():
+            if isinstance(module, nn.Linear):
+                logger.info(f"Found linear layer in time predictor: {name}")
+
+        # Apply LoRA to the correct layers
         if hasattr(time_predictor, "fc1") and isinstance(time_predictor.fc1, nn.Linear):
             time_predictor.fc1 = LoraAdapter(time_predictor.fc1, lora_rank, lora_alpha, lora_dropout)
+            lora_time_predictor_layers_count += 1
+            logger.info(f"Applied LoRA to time predictor fc1 layer (dtype: {time_predictor.fc1.original_module.weight.dtype})")
+
         if hasattr(time_predictor, "fc2") and isinstance(time_predictor.fc2, nn.Linear):
             time_predictor.fc2 = LoraAdapter(time_predictor.fc2, lora_rank, lora_alpha, lora_dropout)
+            lora_time_predictor_layers_count += 1
+            logger.info(f"Applied LoRA to time predictor fc2 layer (dtype: {time_predictor.fc2.original_module.weight.dtype})")
+
+        # Additionally apply LoRA to conv layers by checking their existence
+        if hasattr(time_predictor, "conv1") and hasattr(time_predictor.conv1, "weight"):
+            logger.info(f"Found conv1 layer in time predictor (dtype: {time_predictor.conv1.weight.dtype})")
+            # Conv layers can't use same LoRA approach as Linear
+            # We'll apply parameter-efficient tuning by making only these layers trainable
+            if time_predictor.conv1.weight is not None:
+                time_predictor.conv1.weight.requires_grad = True
+                if time_predictor.conv1.bias is not None:
+                    time_predictor.conv1.bias.requires_grad = True
+                lora_time_predictor_layers_count += 1
+                logger.info("Made time predictor conv1 layer trainable")
+
+        if hasattr(time_predictor, "conv2") and hasattr(time_predictor.conv2, "weight"):
+            logger.info(f"Found conv2 layer in time predictor (dtype: {time_predictor.conv2.weight.dtype})")
+            if time_predictor.conv2.weight is not None:
+                time_predictor.conv2.weight.requires_grad = True
+                if time_predictor.conv2.bias is not None:
+                    time_predictor.conv2.bias.requires_grad = True
+                lora_time_predictor_layers_count += 1
+                logger.info("Made time predictor conv2 layer trainable")
         
-        self.agent_model.time_predictor.requires_grad_(True)
+        # Don't need this as we are already selectively turning on weights
+        # self.agent_model.time_predictor.requires_grad_(True)
+        
+        # Count trainable parameters after LoRA
+        trainable_params = sum(p.numel() for p in self.agent_model.parameters() if p.requires_grad)
+        total_params_after = sum(p.numel() for p in self.agent_model.parameters())
+        
+        logger.info(f"Total parameters after LoRA: {total_params_after:,}")
+        logger.info(f"Trainable parameters: {trainable_params:,}")
+        logger.info(f"Percentage of trainable parameters: {trainable_params/total_params_after*100:.4f}%")
 
     def rloo_repeat(self, data, rloo_k):
         """make the data repeat rloo_k times
