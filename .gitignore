@@ -11,3 +11,4 @@ submit_*.sh
 *.log
 *.out
 *.err
+*.jsonl
