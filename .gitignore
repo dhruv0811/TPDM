@@ -12,3 +12,4 @@ submit_*.sh
 *.out
 *.err
 *.jsonl
+*.json
