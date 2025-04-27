@@ -701,7 +701,23 @@ class SD3PredictNextTimeStepModel(nn.Module):
             time_pred = self.time_predictor(fix_hidden_states_combined, fix_temb)
             sigma_next = torch.zeros_like(sigma)
             for i, (alpha, beta) in enumerate(time_pred):
-                beta_dist = torch.distributions.Beta(alpha, beta)
+                # Cast to float32 for numerical stability 
+                alpha_32 = alpha.float()
+                beta_32 = beta.float()
+                
+                # Clamp to ensure valid parameter values (must be > 0)
+                alpha_32 = torch.clamp(alpha_32, min=1e-3, max=1e4)
+                beta_32 = torch.clamp(beta_32, min=1e-3, max=1e4)
+                
+                try:
+                    beta_dist = torch.distributions.Beta(alpha_32, beta_32)
+                except (ValueError, RuntimeError) as e:
+                    # Fallback in case of error
+                    logger.warning(f"Error creating Beta distribution with alpha={alpha_32}, beta={beta_32}. Using fallback values.")
+                    alpha_32 = torch.tensor(1.0, device=alpha.device)
+                    beta_32 = torch.tensor(1.0, device=beta.device)
+                    beta_dist = torch.distributions.Beta(alpha_32, beta_32)
+                
                 # if now sigma is smaller than min_sigma, we should not get prob from beta_dist
                 if sigma[i] < self.min_sigma:
                     sigma_next[i] = fix_sigmas[i][step]
@@ -712,9 +728,21 @@ class SD3PredictNextTimeStepModel(nn.Module):
                 else:
                     sigma_next[i] = fix_sigmas[i][step]
                     ratio = sigma_next[i] / sigma[i] if self.relative else sigma[i] - sigma_next[i]
+                
+                # Ensure ratio is valid for log_prob calculation
                 ratio = torch.clamp(ratio, min=self.epsilon, max=1 - self.epsilon)
+                
+                try:
+                    prob = beta_dist.log_prob(ratio.float())  # Cast ratio to float32 too
+                    if torch.isnan(prob) or torch.isinf(prob):
+                        # If still NaN, use a small negative value as fallback
+                        logger.warning(f"NaN or Inf in log_prob calculation with ratio={ratio}. Using fallback.")
+                        prob = torch.tensor(-1.0, device=prob.device, dtype=prob.dtype)
+                except (ValueError, RuntimeError) as e:
+                    logger.warning(f"Error calculating log_prob with ratio={ratio}. Using fallback.")
+                    prob = torch.tensor(-1.0, device=self.vae.device)
+                
                 sigmas[i].append(sigma_next[i])
-                prob = beta_dist.log_prob(ratio)
                 logprobs[i].append(prob)
                 if sigma[i] < self.min_sigma:
                     prob_masks[i].append(torch.tensor(1))
@@ -723,7 +751,7 @@ class SD3PredictNextTimeStepModel(nn.Module):
 
             sigma = sigma_next
 
-        # the value will not influent the result
+        # the value will not influence the result
         INVALID_LOGPROB = 1.0
         logprobs = torch.stack([torch.stack(item) for item in logprobs])
         prob_masks = torch.stack([torch.stack(item) for item in prob_masks]).bool().to(logprobs.device)

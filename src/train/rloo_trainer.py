@@ -549,12 +549,15 @@ class CommonRLOOTrainer(RLOOTrainer):
                     minibatch_idx += 1
                     # del everything and empty cache
                     # fmt: off
-                    del (
-                        mb_outputs, new_logprobs,
-                        logprobs_diff, ratio, pg_losses, pg_losses2,
-                        pg_loss, loss, pg_clipfrac, approxkl,
-                        mb_advantage, mb_logprobs,
-                    )
+                    try:
+                        del (
+                            mb_outputs, new_logprobs,
+                            logprobs_diff, ratio, pg_losses, pg_losses2,
+                            pg_loss, loss, pg_clipfrac, approxkl,
+                            mb_advantage, mb_logprobs,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Delete error: {e}")
                     # fmt: on
                     torch.cuda.empty_cache()
             with torch.no_grad():
@@ -595,7 +598,7 @@ class CommonRLOOTrainer(RLOOTrainer):
             self.state.global_step += 1
             self.control = self.callback_handler.on_step_end(args, self.state, self.control)
             if self.control.should_save:
-                self._save_checkpoint(model, trial=None, metrics=metrics)
+                self._save_checkpoint(model, trial=None)
                 self.control = self.callback_handler.on_save(self.args, self.state, self.control)
             torch.cuda.empty_cache()
             gc.collect()
